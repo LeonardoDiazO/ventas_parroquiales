@@ -1,0 +1,12 @@
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+
+# Dependencias (por si en el futuro se agrega tooling con npm)
+node_modules/
+
+# Logs
+*.log

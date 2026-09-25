@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ventas Parroquiales</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⛪</text></svg>">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+
+<div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+<!-- ════════ LOGIN ════════ -->
+<div id="loginScreen">
+  <div class="lg-logo">⛪</div>
+  <h1 class="lg-title">Ventas Parroquiales</h1>
+  <p class="lg-sub">Gestión de pedidos y pagos<br>para eventos parroquiales</p>
+  <div class="lg-box">
+    <div class="fg"><label>Usuario</label>
+      <input type="text" id="lgUser" placeholder="Ej: padre, vendedor1..." autocomplete="username" autocapitalize="none" spellcheck="false"></div>
+    <div class="fg"><label>Contraseña</label>
+      <input type="password" id="lgPass" placeholder="••••••••" autocomplete="current-password"></div>
+    <button class="btn bpr" id="lgBtn" onclick="doLogin()">Entrar →</button>
+    <div id="lgErr"></div>
+    <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:20px;">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px;font-weight:600;">🧪 Probar sin cuenta — elige tu rol:</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <button class="btn" style="background:#FFF7ED;color:#C2410C;border:2px solid #FED7AA;font-size:13px;font-weight:700;" onclick="enterDemo('admin')">
+          ⚙️ Administrador<br><span style="font-size:11px;font-weight:400;opacity:.8;">El Padre — config y reportes</span>
+        </button>
+        <button class="btn" style="background:#F0FDF4;color:#166534;border:2px solid #86EFAC;font-size:13px;font-weight:700;" onclick="enterDemo('seller')">
+          🛒 Vendedor<br><span style="font-size:11px;font-weight:400;opacity:.8;">Cajero — registra pedidos y pagos</span>
+        </button>
+      </div>
+      <p style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5;">
+        Datos ficticios — sin conexión a Supabase
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ APP ════════ -->
+<div id="app" class="hide">
+
+  <div id="hdr">
+    <div class="hl">
+      <div class="hb">⛪ Ventas Parroquiales</div>
+      <div class="he" id="hdrEvent" onclick="openEventsModal()" style="cursor:pointer;" title="Tocar para cambiar de evento">Cargando...</div>
+    </div>
+    <div class="hr">
+      <div class="hu" id="hdrUser"></div>
+      <div class="hd" id="hdrDate"></div>
+      <button class="hbtn" onclick="doLogout()">Salir</button>
+    </div>
+  </div>
+
+  <!-- VIEW: DASHBOARD -->
+  <div class="view active" id="viewDashboard">
+    <div id="closedBanner" class="hide" style="margin:14px 16px 0;background:#FEF2F2;border:2px solid #FECACA;border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:10px;">
+      <span style="font-size:26px;">🔒</span>
+      <div>
+        <div style="font-weight:800;font-size:15px;color:#991B1B;">Evento cerrado a nuevas ventas</div>
+        <div style="font-size:12px;color:#991B1B;opacity:.85;">Ya no se pueden registrar más pedidos en este evento.</div>
+      </div>
+    </div>
+    <div class="sgrid">
+      <div class="stile hl" id="tileRecaudado"><div class="sl">Recaudado</div><div class="sv" id="sRec">$0</div></div>
+      <div class="stile"><div class="sl">Unidades vendidas</div><div class="sv" id="sMet">0/0</div></div>
+      <div class="stile"><div class="sl">Pagados</div><div class="sv" id="sPag">0/0</div></div>
+      <div class="stile"><div class="sl">Pendientes</div>
+        <div class="sv" id="sPen" style="color:var(--warn)">0</div></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <span style="font-weight:700;font-size:14px;">Progreso de venta</span>
+        <span style="font-size:13px;color:var(--muted)" id="sPct">0%</span>
+      </div>
+      <div class="pbar"><div class="pfill" id="pFill" style="width:0%"></div></div>
+      <div id="prodSummaryLine" style="font-size:12px;color:var(--muted);">—</div>
+    </div>
+
+    <div class="card" id="cardRecentPays">
+      <div class="ctitle">Últimos pagos</div>
+      <div id="recentPays"><div class="loading">Cargando...</div></div>
+    </div>
+
+    <div id="adminPanel" class="hide">
+      <div class="sectitle">⚙️ Panel Admin</div>
+      <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px;">
+        <button class="btn bou" onclick="openAdminModal()">✏️ Configurar evento y productos</button>
+        <button class="btn" onclick="openEventsModal()"
+          style="background:#FFF7ED;color:#C2410C;border:2px solid #FED7AA;">
+          📅 Ver eventos / Exportar
+        </button>
+        <button class="btn" onclick="openUserModal('seller')"
+          style="background:#F5F3FF;color:#6D28D9;border:2px solid #C4B5FD;">
+          🛒 Crear cuenta de vendedor
+        </button>
+        <button class="btn" onclick="openUsersModal()"
+          style="background:#F0F9FF;color:#0369A1;border:2px solid #BAE6FD;">
+          👥 Ver usuarios
+        </button>
+        <button class="btn" onclick="openWorkingLocationsModal()"
+          style="background:#ECFEFF;color:#155E75;border:2px solid #A5F3FC;">
+          📍 Quién está en cada evento
+        </button>
+        <button class="btn" onclick="openAuditModal()"
+          style="background:#FEFCE8;color:#854D0E;border:2px solid #FEF08A;">
+          📝 Ver auditoría
+        </button>
+        <!-- Solo visible para superadmin -->
+        <button class="btn hide" id="btnCreateAdmin" onclick="openUserModal('admin')"
+          style="background:#FFF7ED;color:#C2410C;border:2px solid #FED7AA;">
+          ⚙️ Crear cuenta de administrador
+        </button>
+      </div>
+    </div>
+
+    <!-- Panel exclusivo superadmin -->
+    <div id="superPanel" class="hide">
+      <div class="sectitle">👑 Panel Superadmin</div>
+      <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px;">
+        <div style="background:#FFF7ED;border-radius:12px;padding:12px 14px;font-size:13px;color:#92400E;line-height:1.5;">
+          <strong>Acceso completo.</strong> Puedes crear y gestionar administradores y vendedores de todos los eventos.
+        </div>
+        <button class="btn" onclick="openUserModal('admin')"
+          style="background:#FFF7ED;color:#C2410C;border:2px solid #FED7AA;">
+          ⚙️ Crear cuenta de administrador
+        </button>
+        <button class="btn" onclick="openUserModal('seller')"
+          style="background:#F5F3FF;color:#6D28D9;border:2px solid #C4B5FD;">
+          🛒 Crear cuenta de vendedor
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- VIEW: ORDERS -->
+  <div class="view" id="viewOrders">
+    <div class="swrap">
+      <input type="text" id="searchInput" placeholder="🔍 Buscar por nombre..." oninput="renderOrders()">
+    </div>
+    <div class="ftabs">
+      <button class="ftab active" onclick="setFilter('all',this)">Todos</button>
+      <button class="ftab" onclick="setFilter('pending',this)">⏳ Pendientes</button>
+      <button class="ftab" onclick="setFilter('paid',this)">✅ Pagados</button>
+      <button class="ftab" onclick="setFilter('preventa',this)">📋 Preventa</button>
+      <button class="ftab" onclick="setFilter('delivery',this)">🛵 Domicilio</button>
+    </div>
+    <div id="ordersList"><div class="loading">Cargando...</div></div>
+  </div>
+
+  <!-- VIEW: FINANCES -->
+  <div class="view" id="viewFinances">
+    <div class="sgrid">
+      <div class="stile hl"><div class="sl">Total cobrado</div><div class="sv" id="fCob">$0</div></div>
+      <div class="stile"><div class="sl">Por cobrar</div>
+        <div class="sv" id="fPen" style="color:var(--warn)">$0</div></div>
+    </div>
+    <div class="card"><div class="ctitle">Por método de pago</div>
+      <div id="finMeth"><div class="loading">Cargando...</div></div></div>
+    <div class="card"><div class="ctitle">Por producto</div>
+      <div id="finProd"><div class="loading">Cargando...</div></div></div>
+    <div class="card"><div class="ctitle">🛵 Domicilios</div>
+      <div id="finDlv"><div class="loading">Cargando...</div></div></div>
+    <div class="card"><div class="ctitle">Todos los pagos</div>
+      <div id="finAll"><div class="loading">Cargando...</div></div></div>
+  </div>
+
+  <nav id="bnav">
+    <button class="nb active" onclick="switchView('Dashboard',this)">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/>
+        <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+        <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+        <rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      Dashboard
+    </button>
+    <button class="nb" onclick="switchView('Orders',this)">
+      <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
+        <rect x="9" y="3" width="6" height="4" rx="1"/><path d="m9 12 2 2 4-4"/></svg>
+      Pedidos
+    </button>
+    <button class="nb" id="navFinances" onclick="switchView('Finances',this)">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      Finanzas
+    </button>
+  </nav>
+  <button id="fab" onclick="openAddOrder()" title="Registrar pedido (preventa o en evento)">+</button>
+</div>
+
+<!-- ════════ MODAL: PAYMENT / DETAIL ════════ -->
+<div class="overlay hidden" id="payModal">
+  <div class="sheet"><button class="mclose" onclick="closeModal('payModal')">✕</button><div class="handle"></div><div id="payContent"></div></div>
+</div>
+
+<!-- ════════ MODAL: ADD ORDER ════════ -->
+<div class="overlay hidden" id="addModal">
+  <div class="sheet">
+    <button class="mclose" onclick="closeModal('addModal')">✕</button>
+    <div class="handle"></div>
+    <div class="stitle">➕ Registrar pedido</div>
+    <div style="font-size:13px;color:var(--muted);margin-top:-12px;margin-bottom:14px;">Úsalo para preventas y para ventas en el evento</div>
+
+    <div class="fg" style="margin-bottom:18px;">
+      <label>Tipo de venta</label>
+      <div class="mgrid" style="grid-template-columns:1fr 1fr;margin-bottom:0;">
+        <div class="mth sel" id="st_preventa"   onclick="selSaleType('preventa')">
+          <span class="mi">📋</span>Preventa</div>
+        <div class="mth"     id="st_en_evento"  onclick="selSaleType('en_evento')">
+          <span class="mi">🏪</span>En evento</div>
+      </div>
+    </div>
+
+    <div class="fg"><label>Nombre del cliente *</label>
+      <input type="text" id="nName" placeholder="Ej: María González"></div>
+    <div class="fg"><label>Teléfono</label>
+      <input type="tel" id="nPhone" placeholder="300 123 4567" inputmode="tel"></div>
+
+    <div class="fg">
+      <label>Productos</label>
+      <div id="prodInputs"><div class="loading">Cargando productos...</div></div>
+    </div>
+
+    <div style="margin:14px 0;">
+      <div class="chkrow">
+        <input type="checkbox" id="nDlv" onchange="toggleDlv()">
+        <label for="nDlv">🛵 Necesita domicilio</label>
+      </div>
+    </div>
+    <div id="dlvFields" class="hide">
+      <div class="fg"><label>Dirección</label>
+        <input type="text" id="nAddr" placeholder="Ej: Cra 5 #12-34, San Felipe"></div>
+    </div>
+    <div class="fg"><label>Notas</label>
+      <textarea id="nNotes" rows="2" placeholder="Observaciones..."></textarea></div>
+
+    <div class="sumbox">
+      <div class="sl2">Total del pedido</div>
+      <div class="sv2" id="orderTotalDisp">$0</div>
+    </div>
+    <button class="btn bpr" onclick="saveOrder()">Guardar pedido</button>
+    <button class="btn bgh" onclick="closeModal('addModal')">Cancelar</button>
+  </div>
+</div>
+
+<!-- ════════ MODAL: ADMIN SETUP ════════ -->
+<div class="overlay hidden" id="adminModal">
+  <div class="sheet">
+    <button class="mclose" onclick="closeModal('adminModal')">✕</button>
+    <div class="handle"></div>
+    <div class="stitle">⚙️ Evento y Productos</div>
+
+    <!-- Event config -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <div style="font-weight:700;font-size:15px;color:var(--pr);">📅 Datos del evento</div>
+      <div id="adminEventBadge"></div>
+    </div>
+    <div class="fg"><label>Nombre del evento</label>
+      <input type="text" id="aName" placeholder="Ej: Catedratón – Sep 27"></div>
+    <div class="row2">
+      <div class="fg" style="margin:0;"><label>Fecha</label>
+        <input type="date" id="aDate"></div>
+      <div class="fg" style="margin:0;"><label>Meta (unidades)</label>
+        <input type="number" id="aGoal" value="100" inputmode="numeric"></div>
+    </div>
+    <button class="btn bpr" onclick="saveEvent()">
+      💾 Guardar evento
+    </button>
+    <button class="btn hide" id="btnActivateEvent" style="background:#F0FDF4;color:#166534;border:2px solid #86EFAC;margin-top:10px;" onclick="activateEvent()">
+      🚀 Activar este evento (usarlo para ventas del día)
+    </button>
+    <button class="btn hide" id="btnCloseEvent" style="background:#FEF2F2;color:#991B1B;border:2px solid #FECACA;margin-top:10px;" onclick="toggleEventClosed()">
+      🔒 Cerrar evento (no más ventas)
+    </button>
+    <button class="btn bgh" style="margin-top:10px;margin-bottom:10px;" onclick="openAdminModal(null, true)">
+      🆕 Empezar un evento nuevo
+    </button>
+
+    <!-- Products -->
+    <div style="font-weight:700;font-size:15px;margin-bottom:12px;color:var(--pr);">🛒 Productos</div>
+    <div id="adminProdList"><div class="loading">Cargando...</div></div>
+
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+      <div style="font-weight:700;font-size:14px;margin-bottom:10px;">+ Agregar producto</div>
+
+      <div class="fg"><label>Nombre del producto</label>
+        <input type="text" id="pName" placeholder="Ej: Pastel de pollo, Empanada, Granizado..."
+          oninput="onProdNameInput(this.value)"></div>
+
+      <div class="fg">
+        <label>Ícono detectado <span id="pEmojiDisplay" style="font-size:20px;">🛒</span>
+          <span style="font-size:11px;color:var(--muted);font-weight:400;"> · toca uno para cambiarlo</span>
+        </label>
+        <input type="hidden" id="pEmoji" value="🛒">
+        <div id="emojiPicker" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">
+          <!-- rendered by JS -->
+        </div>
+      </div>
+
+      <div class="row2">
+        <div class="fg" style="margin:0;"><label>Precio ($)</label>
+          <input type="number" id="pPrice" placeholder="12000" inputmode="numeric"></div>
+        <div class="fg" style="margin:0;"><label>Límite de unidades (opcional)</label>
+          <input type="number" id="pStockLimit" placeholder="Sin límite" min="0" inputmode="numeric"></div>
+      </div>
+
+      <button class="btn bou" onclick="saveProduct()">Agregar producto</button>
+    </div>
+
+    <button class="btn bgh" style="margin-top:14px;" onclick="closeModal('adminModal')">Cerrar</button>
+  </div>
+</div>
+
+<!-- ════════ MODAL: EVENTOS (historial) ════════ -->
+<div class="overlay hidden" id="eventsModal">
+  <div class="sheet">
+    <button class="mclose" onclick="closeModal('eventsModal')">✕</button>
+    <div class="handle"></div>
+    <div class="stitle">📅 Eventos</div>
+    <p style="font-size:13px;color:var(--muted);margin-top:-12px;margin-bottom:14px;line-height:1.5;">
+      Elige en qué evento quieres trabajar (vender, ver pedidos y finanzas). Cada persona puede estar en un evento distinto.
+    </p>
+    <button class="btn bou hide" id="btnNewEventFromList" style="margin-bottom:14px;" onclick="closeModal('eventsModal');openAdminModal(null, true)">
+      🆕 Empezar un evento nuevo
+    </button>
+    <div id="eventsList"><div class="loading">Cargando...</div></div>
+    <button class="btn bgh" style="margin-top:14px;" onclick="closeModal('eventsModal')">Cerrar</button>
+  </div>
+</div>
+
+<!-- ════════ MODAL: CREAR USUARIO ════════ -->
+<div class="overlay hidden" id="userModal">
+  <div class="sheet">
+    <button class="mclose" onclick="closeModal('userModal')">✕</button>
+    <div class="handle"></div>
+    <div class="stitle" id="userModalTitle">👤 Crear cuenta</div>
+    <p style="font-size:13px;color:var(--muted);margin-top:-10px;margin-bottom:18px;line-height:1.5;">
+      El usuario iniciará sesión con su nombre de usuario y contraseña. No necesita correo.
+    </p>
+    <!-- Selector de rol — solo visible para superadmin -->
+    <div class="fg hide" id="roleSelector">
+      <label>Rol de la cuenta</label>
+      <div class="mgrid" style="grid-template-columns:1fr 1fr;margin-bottom:0;">
+        <div class="mth sel" id="role_seller" onclick="selNewRole('seller')">
+          <span class="mi">🛒</span>Vendedor</div>
+        <div class="mth" id="role_admin" onclick="selNewRole('admin')">
+          <span class="mi">⚙️</span>Administrador</div>
+      </div>
+    </div>
+    <div class="fg"><label>Nombre completo</label>
+      <input type="text" id="uName" placeholder="Ej: Padre Daniel" autocapitalize="words"></div>
+    <div class="fg"><label>Usuario</label>
+      <input type="text" id="uUser" placeholder="Ej: padredaniel, vendedor1..." autocapitalize="none" spellcheck="false"
+        oninput="this.value=this.value.toLowerCase().replace(/\s+/g,'')">
+      <div style="font-size:12px;color:var(--muted);margin-top:4px;">Solo letras y números, sin espacios.</div>
+    </div>
+    <div class="fg"><label>Contraseña</label>
+      <input type="password" id="uPass" placeholder="Mínimo 6 caracteres"></div>
+    <div id="uErr" style="color:var(--err);font-size:13px;min-height:16px;margin-bottom:8px;"></div>
+    <button class="btn bpr" onclick="createUser()">✅ Crear cuenta</button>
+    <button class="btn bgh" onclick="closeModal('userModal')">Cancelar</button>
+  </div>
+</div>
+
+<!-- ════════ MODAL: USUARIOS ════════ -->
+<div class="overlay hidden" id="usersModal">
+  <div class="sheet">
+    <button class="mclose" onclick="closeModal('usersModal')">✕</button>
+    <div class="handle"></div>
+    <div class="stitle">👥 Usuarios</div>
+    <p style="font-size:13px;color:var(--muted);margin-top:-12px;margin-bottom:14px;line-height:1.5;">
+      Solo un superadmin puede gestionar cuentas de administrador. Nadie puede desactivarse o eliminarse a sí mismo.
+    </p>
+    <div id="usersList"><div class="loading">Cargando...</div></div>
+    <button class="btn bgh" style="margin-top:14px;" onclick="closeModal('usersModal')">Cerrar</button>
+  </div>
+</div>
+
+<!-- ════════ MODAL: AUDITORÍA ════════ -->
+<div class="overlay hidden" id="auditModal">
+  <div class="sheet">
+    <button class="mclose" onclick="closeModal('auditModal')">✕</button>
+    <div class="handle"></div>
+    <div class="stitle">📝 Auditoría</div>
+    <p style="font-size:13px;color:var(--muted);margin-top:-12px;margin-bottom:14px;line-height:1.5;">
+      Últimas 100 acciones sensibles: cierres de evento, cambios de precio, borrados y gestión de cuentas.
+    </p>
+    <div id="auditList"><div class="loading">Cargando...</div></div>
+    <button class="btn bgh" style="margin-top:14px;" onclick="closeModal('auditModal')">Cerrar</button>
+  </div>
+</div>
+
+<!-- ════════ MODAL: UBICACIÓN DE VENDEDORES ════════ -->
+<div class="overlay hidden" id="locationsModal">
+  <div class="sheet">
+    <button class="mclose" onclick="closeModal('locationsModal')">✕</button>
+    <div class="handle"></div>
+    <div class="stitle">📍 Quién está en cada evento</div>
+    <p style="font-size:13px;color:var(--muted);margin-top:-12px;margin-bottom:14px;line-height:1.5;">
+      En qué evento está trabajando ahora mismo cada vendedor (según su selección más reciente).
+    </p>
+    <div id="locationsList"><div class="loading">Cargando...</div></div>
+    <button class="btn bgh" style="margin-top:14px;" onclick="closeModal('locationsModal')">Cerrar</button>
+  </div>
+</div>
+
+<!-- ════════ MODAL: CONFIRMAR / PEDIR VALOR (reemplaza confirm()/prompt() nativos) ════════ -->
+<div class="overlay hidden" id="miniModal" onclick="if(event.target===this) miniModalCancel()">
+  <div class="sheet" style="max-width:380px;">
+    <button class="mclose" onclick="miniModalCancel()">✕</button>
+    <div class="handle"></div>
+    <div class="stitle" id="miniModalTitle" style="font-size:18px;margin-bottom:10px;">¿Estás seguro?</div>
+    <div id="miniModalBody" style="font-size:14px;color:var(--muted);line-height:1.5;margin-bottom:16px;"></div>
+    <div class="fg hide" id="miniModalInputWrap">
+      <input type="text" id="miniModalInput" onkeydown="if(event.key==='Enter')miniModalConfirm()">
+      <div id="miniModalHint" style="font-size:12px;color:var(--muted);margin-top:4px;"></div>
+    </div>
+    <button class="btn bok2" id="miniModalConfirmBtn" onclick="miniModalConfirm()">Confirmar</button>
+    <button class="btn bgh" onclick="miniModalCancel()">Cancelar</button>
+  </div>
+</div>
+
+<!-- ════════ MODAL: IMAGE ════════ -->
+<div class="overlay hidden" id="imgModal" onclick="closeModal('imgModal')">
+  <div style="padding:20px;width:100%;max-width:440px;">
+    <img id="imgV" src="" style="width:100%;max-height:80vh;border-radius:16px;object-fit:contain;">
+  </div>
+</div>
+
+
+<script src="js/app.js"></script>
+</body>
+</html>
