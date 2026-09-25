@@ -10,3 +10,6 @@ node_modules/
 
 # Logs
 *.log
+
+# Esquema de base de datos — contiene RLS y funciones sensibles, se mantiene fuera del repo por seguridad
+ventas_parroquiales_supabase.sql

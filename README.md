@@ -94,7 +94,7 @@ const BUCKET            = 'receipts';
 
 La base de datos necesita las tablas (`profiles`, `events`, `products`, `orders`, `order_items`, `payments`, `audit_log`), las políticas RLS y las funciones RPC (`is_admin_or_above`, `is_superadmin`, `set_user_role`, `admin_list_users`, `admin_set_user_banned`, `admin_reset_password`, `admin_delete_user`, `admin_list_working_locations`, `admin_delete_event`, `log_audit`) que usa `js/app.js`.
 
-> ⚠️ **Pendiente:** `NOTAS-TECNICAS.md` referencia un script `ventas_parroquiales_supabase.sql` con todo este esquema (idempotente, con `IF NOT EXISTS` / `CREATE OR REPLACE`), pero **ese archivo no está en este repositorio**. Hace falta añadirlo para que el setup de Supabase quede completo y reproducible.
+> 🔒 **Nota:** el script `ventas_parroquiales_supabase.sql` con este esquema (idempotente, con `IF NOT EXISTS` / `CREATE OR REPLACE`) se mantiene **fuera del repositorio de forma intencional**, por seguridad (incluye políticas RLS y funciones `SECURITY DEFINER`). Se conserva solo en local; está excluido vía `.gitignore`.
 
 ## Roles y permisos
 
