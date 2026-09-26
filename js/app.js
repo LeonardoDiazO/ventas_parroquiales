@@ -258,6 +258,7 @@ function enterDemo(role = 'admin') {
   window.activateEvent  = () => { toast('🧪 Demo: solo hay un evento de prueba'); };
   window.switchWorkingEvent = () => { toast('🧪 Demo: solo hay un evento de prueba'); };
   window.toggleEventClosed = () => { toast('🧪 Demo: no se puede cerrar el evento de prueba'); };
+  window.runBulkImport = () => { toast('🧪 Demo: importación no disponible en modo demo'); };
 
   // Boot the UI
   document.getElementById('loginScreen').classList.add('hide');
@@ -498,6 +499,7 @@ const AUDIT_LABELS = {
   'user.unban':          '🔓 Reactivó la cuenta de',
   'user.delete':         '🗑️ Eliminó la cuenta de',
   'user.password_reset': '🔑 Reseteó la contraseña de',
+  'order.bulk_import':   '📥 Importó pedidos masivamente en',
 };
 
 async function openAuditModal() {
@@ -1323,6 +1325,198 @@ async function saveOrder() {
   if (ie) { toast('❌ Error en ítems: ' + ie.message); return; }
 
   toast('✅ Pedido guardado'); closeModal('addModal'); await loadAll();
+}
+
+// ══════════════════════════════════════
+// IMPORTAR PEDIDOS (pegar lista de WhatsApp)
+// ══════════════════════════════════════
+let importParsed = [];
+let importUnrecognized = [];
+
+// Normaliza para comparar nombres sin que tildes/mayúsculas/espacios generen
+// falsos "nuevo" — no corrige errores de tipeo reales, para eso está la
+// revisión manual antes de confirmar.
+function normalizeName(s) {
+  return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .toLowerCase().replace(/\s+/g,' ').trim();
+}
+
+// Extrae pares (cantidad, emoji) de una línea usando los emojis reales de
+// los productos del evento — así el parser sirve para cualquier producto,
+// no solo pollo/cerdo. El nombre es lo que sobra de la línea al quitar esos
+// pares y los conectores "y"/"e".
+function parseBulkOrdersLine(line, prods) {
+  const emojiAlt = prods.map(p => p.emoji).filter(Boolean).join('|');
+  if (!emojiAlt) return null;
+  const re = new RegExp(`(\\d+)\\s*(${emojiAlt})`, 'gu');
+  const matches = [...line.matchAll(re)];
+  if (!matches.length) return null;
+
+  const items = [];
+  let stripped = line;
+  matches.forEach(m => {
+    const qty = parseInt(m[1], 10);
+    const prod = prods.find(p => p.emoji === m[2]);
+    if (prod && qty > 0) {
+      const existing = items.find(i => i.product_id === prod.id);
+      if (existing) existing.qty += qty;
+      else items.push({ product_id:prod.id, emoji:prod.emoji, name:prod.name, price:prod.price, qty });
+    }
+    stripped = stripped.replace(m[0], ' ');
+  });
+  const name = stripped.replace(/,/g,' ').replace(/\b[yYeE]\b/g,' ').replace(/\s+/g,' ').trim();
+  return { name, items };
+}
+
+function parseBulkOrdersText(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const parsed = [], unrecognized = [];
+  const seenInBatch = new Set();
+
+  lines.forEach((line, idx) => {
+    const r = parseBulkOrdersLine(line, products);
+    if (!r || !r.items.length || !r.name) { unrecognized.push(line); return; }
+
+    const norm = normalizeName(r.name);
+    const existsInDb = orders.some(o => normalizeName(o.customer_name) === norm);
+    const dupInBatch = seenInBatch.has(norm);
+    seenInBatch.add(norm);
+
+    const status = existsInDb ? 'exists' : dupInBatch ? 'duplicate' : 'new';
+    parsed.push({
+      id: `imp_${idx}_${Date.now()}`,
+      name: r.name,
+      items: r.items,
+      status,
+      include: status === 'new', // ya existe / repetido: se dejan sin marcar por defecto
+    });
+  });
+  return { parsed, unrecognized };
+}
+
+function openImportModal() {
+  if (!event) { toast('⚠️ Configura el evento primero'); return; }
+  document.getElementById('importText').value = '';
+  document.getElementById('importPreviewWrap').classList.add('hide');
+  openModal('importModal');
+}
+
+function analyzeImportText() {
+  const text = document.getElementById('importText').value;
+  if (!text.trim()) { toast('⚠️ Pega el texto primero'); return; }
+  if (!products.length) { toast('⚠️ No hay productos configurados en este evento'); return; }
+  const { parsed, unrecognized } = parseBulkOrdersText(text);
+  importParsed = parsed;
+  importUnrecognized = unrecognized;
+  renderImportPreview();
+  document.getElementById('importPreviewWrap').classList.remove('hide');
+}
+
+const itemsSummaryImport = items => items.map(i => `${i.qty}${i.emoji} ${i.name}`).join(' · ');
+
+const IMPORT_BADGES = {
+  new:       '<span class="badge bok">🆕 Nuevo</span>',
+  exists:    '<span class="badge" style="background:#F3F4F6;color:#6B7280;">✅ Ya existe</span>',
+  duplicate: '<span class="badge" style="background:#FEF9C3;color:#854D0E;">⚠️ Repetido en el texto</span>',
+};
+
+function renderImportPreview() {
+  const nNew = importParsed.filter(r => r.status==='new').length;
+  const nExists = importParsed.filter(r => r.status==='exists').length;
+  const nDup = importParsed.filter(r => r.status==='duplicate').length;
+  document.getElementById('importSummary').textContent =
+    `${importParsed.length} detectados · ${nNew} nuevos · ${nExists} ya existen · ${nDup} repetidos` +
+    (importUnrecognized.length ? ` · ${importUnrecognized.length} sin reconocer` : '');
+
+  document.getElementById('importList').innerHTML = importParsed.map(r => `
+    <div class="ocard" style="cursor:default;">
+      <div class="otop">
+        <div class="chkrow" style="padding:0;">
+          <input type="checkbox" id="imp_chk_${r.id}" ${r.include?'checked':''} onchange="toggleImportRow('${r.id}')">
+          <label for="imp_chk_${r.id}" style="font-weight:800;font-size:16px;">${esc(r.name)}</label>
+        </div>
+        ${IMPORT_BADGES[r.status]}
+      </div>
+      <div class="ometa">${esc(itemsSummaryImport(r.items))}</div>
+      <button class="btn bou bsm" style="margin-top:6px;" onclick="toggleImportEdit('${r.id}')">✏️ Editar</button>
+      <div id="importEdit_${r.id}" class="hide"></div>
+    </div>`).join('');
+
+  document.getElementById('importUnrecognizedWrap').classList.toggle('hide', !importUnrecognized.length);
+  document.getElementById('importUnrecognized').innerHTML = importUnrecognized
+    .map(l => `<div style="font-size:13px;color:var(--muted);padding:4px 0;">"${esc(l)}"</div>`).join('');
+}
+
+function toggleImportRow(id) {
+  const r = importParsed.find(x => x.id === id);
+  if (r) r.include = !r.include;
+}
+
+function toggleImportEdit(id) {
+  const el = document.getElementById('importEdit_' + id); if (!el) return;
+  if (!el.classList.contains('hide')) { el.classList.add('hide'); return; }
+  const r = importParsed.find(x => x.id === id); if (!r) return;
+  el.innerHTML = `
+    <div class="aprod-editbox" style="flex-direction:column;align-items:stretch;gap:8px;">
+      <input type="text" id="impName_${id}" value="${esc(r.name)}" placeholder="Nombre">
+      ${products.map(p => {
+        const cur = r.items.find(i => i.product_id === p.id);
+        return `<div style="display:flex;align-items:center;gap:8px;">
+          <span style="width:24px;">${p.emoji}</span>
+          <span style="flex:1;font-size:13px;">${esc(p.name)}</span>
+          <input type="number" min="0" class="prod-qty" id="impQty_${id}_${p.id}" value="${cur?cur.qty:0}">
+        </div>`;
+      }).join('')}
+      <button class="btn bok2 bsm" onclick="saveImportEdit('${id}')">✅ Guardar</button>
+    </div>`;
+  el.classList.remove('hide');
+}
+
+function saveImportEdit(id) {
+  const r = importParsed.find(x => x.id === id); if (!r) return;
+  const name = document.getElementById('impName_' + id).value.trim();
+  if (!name) { toast('⚠️ El nombre no puede quedar vacío'); return; }
+  r.name = name;
+  r.items = products.map(p => {
+    const qty = Number(document.getElementById(`impQty_${id}_${p.id}`)?.value) || 0;
+    return qty > 0 ? { product_id:p.id, emoji:p.emoji, name:p.name, price:p.price, qty } : null;
+  }).filter(Boolean);
+
+  const norm = normalizeName(name);
+  const existsInDb = orders.some(o => normalizeName(o.customer_name) === norm);
+  const dupInBatch = importParsed.some(x => x.id !== id && normalizeName(x.name) === norm);
+  r.status = existsInDb ? 'exists' : dupInBatch ? 'duplicate' : 'new';
+
+  document.getElementById('importEdit_' + id).classList.add('hide');
+  renderImportPreview();
+}
+
+async function runBulkImport() {
+  const toImport = importParsed.filter(r => r.include && r.items.length);
+  if (!toImport.length) { toast('⚠️ No hay pedidos marcados para importar'); return; }
+
+  let ok = 0, failed = 0;
+  for (const r of toImport) {
+    const orderItems = r.items.map(i => ({ product_id:i.product_id, quantity:i.qty, unit_price:i.price }));
+    if (!(await checkStockOrToast(orderItems))) { failed++; continue; }
+
+    const { data: newOrder, error } = await db.from('orders').insert({
+      event_id: event.id, customer_name: r.name, phone:'', needs_delivery:false,
+      address:'', notes:'Importado desde lista', sale_type:'preventa', created_by:user.id,
+    }).select().single();
+    if (error) { failed++; continue; }
+
+    const { error: ie } = await db.from('order_items').insert(
+      orderItems.map(i => ({ ...i, order_id:newOrder.id }))
+    );
+    if (ie) { failed++; continue; }
+    ok++;
+  }
+
+  await logAudit('order.bulk_import', 'event', event.id, event.name, { imported:ok, failed });
+  toast(`✅ ${ok} pedidos importados` + (failed ? ` · ⚠️ ${failed} fallaron` : ''));
+  closeModal('importModal');
+  await loadAll();
 }
 
 // ══════════════════════════════════════

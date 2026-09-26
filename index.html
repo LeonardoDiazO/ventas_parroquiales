@@ -93,6 +93,10 @@
       <div class="sectitle">⚙️ Panel Admin</div>
       <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px;">
         <button class="btn bou" onclick="openAdminModal()">✏️ Configurar evento y productos</button>
+        <button class="btn" onclick="openImportModal()"
+          style="background:#ECFDF5;color:#047857;border:2px solid #A7F3D0;">
+          📥 Importar pedidos (pegar lista)
+        </button>
         <button class="btn" onclick="openEventsModal()"
           style="background:#FFF7ED;color:#C2410C;border:2px solid #FED7AA;">
           📅 Ver eventos / Exportar
@@ -314,6 +318,39 @@
     </div>
 
     <button class="btn bgh" style="margin-top:14px;" onclick="closeModal('adminModal')">Cerrar</button>
+  </div>
+</div>
+
+<!-- ════════ MODAL: IMPORTAR PEDIDOS ════════ -->
+<div class="overlay hidden" id="importModal">
+  <div class="sheet">
+    <button class="mclose" onclick="closeModal('importModal')">✕</button>
+    <div class="handle"></div>
+    <div class="stitle">📥 Importar pedidos</div>
+    <p style="font-size:13px;color:var(--muted);margin-top:-12px;margin-bottom:14px;line-height:1.5;">
+      Pega aquí el texto tal cual llega del grupo de WhatsApp (un pedido por línea: nombre y cantidad + emoji de cada producto).
+      Se detectan los pedidos nuevos y se dejan sin marcar los que ya existan o estén repetidos en el mismo texto.
+    </p>
+    <div class="fg">
+      <textarea id="importText" rows="10" placeholder="Isabel Meza 2🐥y 1🐷
+Leonardo 2🐥 y 2🐷
+Mónica del Barre 2🐷"></textarea>
+    </div>
+    <button class="btn bou" onclick="analyzeImportText()">🔍 Analizar</button>
+
+    <div id="importPreviewWrap" class="hide" style="margin-top:16px;">
+      <div style="font-size:13px;color:var(--muted);font-weight:700;margin-bottom:10px;" id="importSummary"></div>
+      <div id="importList"></div>
+
+      <div id="importUnrecognizedWrap" class="hide" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+        <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;">⚠️ Líneas que no se pudieron interpretar (no se importan):</div>
+        <div id="importUnrecognized"></div>
+      </div>
+
+      <button class="btn bpr" style="margin-top:14px;" onclick="runBulkImport()">✅ Importar seleccionados</button>
+    </div>
+
+    <button class="btn bgh" style="margin-top:10px;" onclick="closeModal('importModal')">Cerrar</button>
   </div>
 </div>
 
