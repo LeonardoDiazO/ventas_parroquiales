@@ -14,6 +14,7 @@ let user = null, profile = null, isAdmin = false, isSuperAdmin = false;
 let selectedNewRole = 'seller'; // para el modal de crear usuario
 let event = null, products = [], orders = [], items = [], payments = [];
 let filter = 'all', selMethod = null, selSaleTypeVal = 'preventa';
+let ordersVisibleCount = 20; // paginación de "Pedidos" — se ignora mientras haya texto en el buscador
 let signedUrls = {};          // path → signed URL (receipts)
 let loginCooldown = false;    // rate-limit login
 
@@ -820,7 +821,7 @@ function renderDashboard() {
 // ORDERS
 // ══════════════════════════════════════
 function renderOrders() {
-  const q = (document.getElementById('searchInput')?.value||'').toLowerCase();
+  const q = (document.getElementById('searchInput')?.value||'').toLowerCase().trim();
   let list = [...orders];
   if (filter==='pending')  list = list.filter(o => statusOf(o) !== 'paid');
   if (filter==='paid')     list = list.filter(o => statusOf(o) === 'paid');
@@ -832,7 +833,15 @@ function renderOrders() {
   const el = document.getElementById('ordersList');
   if (!list.length) { el.innerHTML='<div class="empty"><div class="ei">🔍</div>Sin resultados</div>'; return; }
 
-  el.innerHTML = list.map(o => {
+  // 📄 Sin buscador activo se pagina, para no obligar a bajar toda la lista
+  // (un evento grande puede tener cientos de pedidos). Al buscar por
+  // nombre se muestran TODOS los resultados de una vez — buscar algo
+  // puntual y encontrarlo paginado sería peor experiencia.
+  const showAll = !!q;
+  const visible = showAll ? list : list.slice(0, ordersVisibleCount);
+  const restantes = list.length - visible.length;
+
+  el.innerHTML = visible.map(o => {
     const tot=totalOf(o), paid=paidOf(o), st=statusOf(o), rem=tot-paid;
     const bl = {paid:'✓ Pagado', partial:'⋯ Parcial', pending:'⏳ Pendiente'}[st];
     const bc = {paid:'bok', partial:'bpa', pending:'bp'}[st];
@@ -852,11 +861,15 @@ function renderOrders() {
         ${st!=='paid'?`<div style="font-size:13px;color:var(--muted);">Debe: <strong style="color:var(--err);">${cop(rem)}</strong></div>`:''}
       </div>
     </div>`;
-  }).join('');
+  }).join('') + (restantes > 0 ? `
+    <button class="btn bou" style="grid-column:1/-1;margin:6px 0 16px;" onclick="ordersVisibleCount+=20;renderOrders();">
+      Ver más (${restantes} restante${restantes===1?'':'s'})
+    </button>` : '');
 }
 
 function setFilter(f, btn) {
   filter = f;
+  ordersVisibleCount = 20;
   document.querySelectorAll('.ftab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active'); renderOrders();
 }

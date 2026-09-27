@@ -147,7 +147,7 @@
   <!-- VIEW: ORDERS -->
   <div class="view" id="viewOrders">
     <div class="swrap">
-      <input type="text" id="searchInput" placeholder="🔍 Buscar por nombre..." oninput="renderOrders()">
+      <input type="text" id="searchInput" placeholder="🔍 Buscar por nombre..." oninput="ordersVisibleCount=20;renderOrders()">
     </div>
     <div class="ftabs">
       <button class="ftab active" onclick="setFilter('all',this)">Todos</button>
