@@ -327,7 +327,10 @@
     <button class="mclose" onclick="closeModal('importModal')">✕</button>
     <div class="handle"></div>
     <div class="stitle">📥 Importar pedidos</div>
-    <p style="font-size:13px;color:var(--muted);margin-top:-12px;margin-bottom:14px;line-height:1.5;">
+    <div style="background:var(--prl);color:var(--prd);border-radius:10px;padding:10px 14px;font-size:13px;font-weight:700;margin-bottom:14px;">
+      📍 Vas a importar en: <span id="importTargetEvent">—</span>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-top:-6px;margin-bottom:14px;line-height:1.5;">
       Pega aquí el texto tal cual llega del grupo de WhatsApp (un pedido por línea: nombre y cantidad + emoji de cada producto).
       Se detectan los pedidos nuevos y se dejan sin marcar los que ya existan o estén repetidos en el mismo texto.
     </p>

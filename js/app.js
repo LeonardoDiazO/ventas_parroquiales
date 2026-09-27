@@ -1398,6 +1398,10 @@ function openImportModal() {
   if (!event) { toast('⚠️ Configura el evento primero'); return; }
   document.getElementById('importText').value = '';
   document.getElementById('importPreviewWrap').classList.add('hide');
+  // 📍 Siempre importa al evento de TRABAJO actual (el mismo de "➕ Registrar
+  // pedido"), sin importar qué evento se esté editando en "Configurar evento
+  // y productos" si son distintos — lo dejamos explícito para no confundir.
+  document.getElementById('importTargetEvent').textContent = event.name;
   openModal('importModal');
 }
 
@@ -1822,6 +1826,20 @@ async function fetchEventScopedData(id) {
   return { event: ev, products: prods||[], orders: ords||[], items: its, payments: pays };
 }
 
+// Version de totalOf/paidOf/statusOf/itemsOf que opera sobre un `scoped`
+// (de fetchEventScopedData) en vez del estado global — así exportar un
+// evento nunca tiene que sustituir event/products/orders/items/payments
+// mientras el usuario sigue usando la app (antes había una ventana real
+// donde, mientras duraba el export, cualquier otra acción —registrar un
+// pedido, un pago, o el importador— quedaba aplicada al evento exportado).
+function statsIn(scoped, order) {
+  const its = scoped.items.filter(i => i.order_id === order.id);
+  const total = its.reduce((s,i) => s + i.quantity * i.unit_price, 0);
+  const paid = scoped.payments.filter(p => p.order_id === order.id).reduce((s,p) => s + Number(p.amount), 0);
+  const status = paid >= total && total > 0 ? 'paid' : paid > 0 ? 'partial' : 'pending';
+  return { items: its, total, paid, status };
+}
+
 // ══════════════════════════════════════
 // EXPORT CSV
 // ══════════════════════════════════════
@@ -1831,39 +1849,36 @@ async function exportXLSX(eventId) {
   if (!id) { toast('⚠️ Selecciona un evento para exportar'); return; }
   const scoped = await fetchEventScopedData(id);
   if (!scoped) { toast('❌ No se pudo cargar ese evento'); return; }
-
-  // Se opera sobre el estado global (lo reutilizan totalOf/paidOf/statusOf/itemsOf)
-  // y se restaura al terminar, para no afectar el evento activo que ve el usuario.
-  const backup = { event, products, orders, items, payments };
-  ({ event, products, orders, items, payments } = scoped);
+  const { event:ev, products:prods, orders:ords, items:its, payments:pays } = scoped;
 
   // 📎 Firma los comprobantes de este evento con un link de 7 días
   // (antes se guardaba el path crudo del archivo, que no era navegable).
   const receiptLinks = {};
-  const receiptPaths = [...new Set(payments.map(p => pathFromUrl(p.receipt_url)).filter(Boolean))];
+  const receiptPaths = [...new Set(pays.map(p => pathFromUrl(p.receipt_url)).filter(Boolean))];
   if (receiptPaths.length) toast(`⏳ Preparando ${receiptPaths.length} comprobante(s)...`);
   for (const path of receiptPaths) receiptLinks[path] = await resolveReceiptSignedUrl(path);
 
   const wb = XLSX.utils.book_new();
 
   // ── Hoja 1: Resumen ──────────────────────────────────
-  const totUnits = items.reduce((s,i) => s + i.quantity, 0);
-  const totCob   = payments.reduce((s,p) => s + Number(p.amount), 0);
-  const totPed   = orders.reduce((s,o) => s + totalOf(o), 0);
+  const totUnits = its.reduce((s,i) => s + i.quantity, 0);
+  const totCob   = pays.reduce((s,p) => s + Number(p.amount), 0);
+  const orderStats = ords.map(o => statsIn(scoped, o));
+  const totPed   = orderStats.reduce((s,st) => s + st.total, 0);
   const resumen  = [
     ['Reporte de Ventas Parroquiales'],
-    ['Evento',    event?.name || ''],
-    ['Fecha',     event?.date || ''],
+    ['Evento',    ev?.name || ''],
+    ['Fecha',     ev?.date || ''],
     ['Exportado', new Date().toLocaleString('es-CO')],
     [],
-    ['Total pedidos',       orders.length],
+    ['Total pedidos',       ords.length],
     ['Unidades vendidas',   totUnits],
-    ['Meta (unidades)',     event?.goal || 100],
+    ['Meta (unidades)',     ev?.goal || 100],
     ['Total facturado',     totPed],
     ['Total cobrado',       totCob],
     ['Por cobrar',          Math.max(0, totPed - totCob)],
-    ['Pagados completamente', orders.filter(o => statusOf(o) === 'paid').length],
-    ['Pendientes / parciales', orders.filter(o => statusOf(o) !== 'paid').length],
+    ['Pagados completamente', orderStats.filter(st => st.status === 'paid').length],
+    ['Pendientes / parciales', orderStats.filter(st => st.status !== 'paid').length],
     [],
     ['Nota', 'Los links de comprobante de la hoja "Pagos" vencen en 7 días. Para verlas siempre, sin internet, usa el botón "📄 Reporte" — incluye las fotos.'],
   ];
@@ -1873,17 +1888,17 @@ async function exportXLSX(eventId) {
 
   // ── Hoja 2: Pedidos ──────────────────────────────────
   const pedHeaders = ['Cliente','Teléfono','Tipo','Productos','Domicilio','Dirección','Total','Pagado','Pendiente','Estado','Notas'];
-  const pedRows = orders.map(o => {
-    const tot=totalOf(o), paid=paidOf(o);
-    const prods = itemsOf(o).map(i => {
-      const pr = products.find(p => p.id === i.product_id);
+  const pedRows = ords.map(o => {
+    const st = statsIn(scoped, o);
+    const prodsStr = st.items.map(i => {
+      const pr = prods.find(p => p.id === i.product_id);
       return `${i.quantity}x ${pr?.name||'?'}`;
     }).join(' | ');
-    const st = {paid:'Pagado', partial:'Parcial', pending:'Pendiente'}[statusOf(o)];
+    const stLabel = {paid:'Pagado', partial:'Parcial', pending:'Pendiente'}[st.status];
     return [
       o.customer_name, o.phone||'', o.sale_type==='en_evento'?'En evento':'Preventa',
-      prods, o.needs_delivery?'Sí':'No', o.address||'',
-      tot, paid, tot-paid, st, o.notes||''
+      prodsStr, o.needs_delivery?'Sí':'No', o.address||'',
+      st.total, st.paid, st.total-st.paid, stLabel, o.notes||''
     ];
   });
   const ws2 = XLSX.utils.aoa_to_sheet([pedHeaders, ...pedRows]);
@@ -1892,8 +1907,8 @@ async function exportXLSX(eventId) {
 
   // ── Hoja 3: Pagos ─────────────────────────────────────
   const pagHeaders = ['Cliente','Método','Monto','Registrado por','Recibió','Fecha','Comprobante (link 7 días)'];
-  const pagRows = payments.map(p => {
-    const o = orders.find(x => x.id === p.order_id);
+  const pagRows = pays.map(p => {
+    const o = ords.find(x => x.id === p.order_id);
     const path = pathFromUrl(p.receipt_url);
     return [
       o?.customer_name||'', p.method, Number(p.amount),
@@ -1908,8 +1923,8 @@ async function exportXLSX(eventId) {
 
   // ── Hoja 4: Por producto ──────────────────────────────
   const byProd = {};
-  items.forEach(i => {
-    const pr = products.find(p => p.id === i.product_id);
+  its.forEach(i => {
+    const pr = prods.find(p => p.id === i.product_id);
     const k  = i.product_id;
     if (!byProd[k]) byProd[k] = { name: pr?.name||'?', qty:0, rev:0 };
     byProd[k].qty += i.quantity;
@@ -1921,10 +1936,8 @@ async function exportXLSX(eventId) {
   ws4['!cols'] = [{wch:28},{wch:18},{wch:16}];
   XLSX.utils.book_append_sheet(wb, ws4, 'Por producto');
 
-  XLSX.writeFile(wb, `ventas-${event?.date||'export'}.xlsx`);
+  XLSX.writeFile(wb, `ventas-${ev?.date||'export'}.xlsx`);
   toast('📊 Excel exportado');
-
-  ({ event, products, orders, items, payments } = backup);
 }
 
 async function exportHTML(eventId) {
@@ -1932,16 +1945,14 @@ async function exportHTML(eventId) {
   if (!id) { toast('⚠️ Selecciona un evento para exportar'); return; }
   const scoped = await fetchEventScopedData(id);
   if (!scoped) { toast('❌ No se pudo cargar ese evento'); return; }
-
-  const backup = { event, products, orders, items, payments };
-  ({ event, products, orders, items, payments } = scoped);
+  const { event:ev, products:prods, orders:ords, items:its, payments:pays } = scoped;
 
   // 📎 Trae y comprime cada foto de comprobante UNA vez (por path) y la
   // incrusta como base64 — así el reporte final es un solo archivo que
   // "se lleva" las fotos: se abre en cualquier navegador, sin internet
   // y sin que un link expire.
   const embeddedImgs = {};
-  const receiptPaths = [...new Set(payments.map(p => pathFromUrl(p.receipt_url)).filter(Boolean))];
+  const receiptPaths = [...new Set(pays.map(p => pathFromUrl(p.receipt_url)).filter(Boolean))];
   if (receiptPaths.length) {
     toast(`⏳ Incrustando ${receiptPaths.length} comprobante(s) en el reporte...`);
     for (const path of receiptPaths) {
@@ -1953,20 +1964,22 @@ async function exportHTML(eventId) {
   }
 
   const now = new Date().toLocaleString('es-CO');
-  const totUnits = items.reduce((s,i) => s + i.quantity, 0);
-  const totCob   = payments.reduce((s,p) => s + Number(p.amount), 0);
-  const totPend  = Math.max(0, orders.reduce((s,o) => s + totalOf(o), 0) - totCob);
+  const totUnits = its.reduce((s,i) => s + i.quantity, 0);
+  const totCob   = pays.reduce((s,p) => s + Number(p.amount), 0);
+  const orderStats = ords.map(o => statsIn(scoped, o));
+  const totPend  = Math.max(0, orderStats.reduce((s,st) => s + st.total, 0) - totCob);
 
-  const orderRows = orders.map(o => {
-    const tot=totalOf(o), paid=paidOf(o), rem=tot-paid, st=statusOf(o);
+  const orderRows = ords.map((o, idx) => {
+    const { total:tot, paid, status:st, items:oItems } = orderStats[idx];
+    const rem = tot - paid;
     const stLabel = {paid:'✅ Pagado',partial:'⋯ Parcial',pending:'⏳ Pendiente'}[st];
     const stColor = {paid:'#166534',partial:'#92400E',pending:'#991B1B'}[st];
     const stBg    = {paid:'#DCFCE7',partial:'#FEF3C7',pending:'#FEE2E2'}[st];
-    const prods = itemsOf(o).map(i => {
-      const pr = products.find(p=>p.id===i.product_id);
+    const prodsStr = oItems.map(i => {
+      const pr = prods.find(p=>p.id===i.product_id);
       return `${i.quantity}× ${pr?.emoji||''} ${pr?.name||'?'}`;
     }).join('<br>');
-    const oPays = payments.filter(p => p.order_id === o.id);
+    const oPays = pays.filter(p => p.order_id === o.id);
     const paysHtml = oPays.map(p => {
       const path = pathFromUrl(p.receipt_url);
       const embedded = path ? embeddedImgs[path] : null;
@@ -1987,7 +2000,7 @@ async function exportHTML(eventId) {
         ${o.phone?`<br><span style="font-weight:400;font-size:12px;color:#6B7280;">📞 ${o.phone}</span>`:''}
         <br><span style="font-size:11px;color:#6B7280;">${saleType}${dlvBadge}</span>
       </td>
-      <td>${prods}</td>
+      <td>${prodsStr}</td>
       <td style="text-align:right;">${cop(tot)}</td>
       <td style="text-align:right;color:#16A34A;font-weight:700;">${cop(paid)}</td>
       <td style="text-align:right;color:${rem>0?'#DC2626':'#16A34A'};font-weight:700;">${cop(rem)}</td>
@@ -2000,7 +2013,7 @@ async function exportHTML(eventId) {
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Reporte Ventas · ${event?.name||''} · ${event?.date||''}</title>
+<title>Reporte Ventas · ${ev?.name||''} · ${ev?.date||''}</title>
 <style>
   body{font-family:-apple-system,sans-serif;padding:32px;color:#111;max-width:960px;margin:0 auto;}
   h1{color:#F97316;margin-bottom:4px;}
@@ -2018,12 +2031,12 @@ async function exportHTML(eventId) {
 </style>
 </head>
 <body>
-<h1>⛪ ${event?.name||'Ventas'}</h1>
-<div class="sub">Fecha del evento: ${event?.date||'–'} · Exportado: ${now}</div>
+<h1>⛪ ${ev?.name||'Ventas'}</h1>
+<div class="sub">Fecha del evento: ${ev?.date||'–'} · Exportado: ${now}</div>
 ${receiptPaths.length ? `<div class="sub" style="color:#16A34A;">📎 Las fotos de los comprobantes están incrustadas en este archivo — se ven sin necesidad de internet.</div>` : ''}
 <div class="stats">
-  <div class="stat"><div class="l">Pedidos</div><div class="v">${orders.length}</div></div>
-  <div class="stat"><div class="l">Unidades vendidas</div><div class="v">${totUnits} / ${event?.goal||100}</div></div>
+  <div class="stat"><div class="l">Pedidos</div><div class="v">${ords.length}</div></div>
+  <div class="stat"><div class="l">Unidades vendidas</div><div class="v">${totUnits} / ${ev?.goal||100}</div></div>
   <div class="stat"><div class="l">Total cobrado</div><div class="v">${cop(totCob)}</div></div>
   <div class="stat"><div class="l">Por cobrar</div><div class="v">${cop(totPend)}</div></div>
 </div>
@@ -2047,11 +2060,9 @@ ${receiptPaths.length ? `<div class="sub" style="color:#16A34A;">📎 Las fotos 
 
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([html],{type:'text/html;charset=utf-8;'}));
-  a.download = `reporte-ventas-${event?.date||'export'}.html`;
+  a.download = `reporte-ventas-${ev?.date||'export'}.html`;
   a.click();
   toast('📄 Reporte exportado — ábrelo en el navegador para imprimir o compartir');
-
-  ({ event, products, orders, items, payments } = backup);
 }
 
 // ══════════════════════════════════════
